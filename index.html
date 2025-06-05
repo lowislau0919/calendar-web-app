@@ -7,17 +7,23 @@
   <style>
     body { font-family: 'Arial', sans-serif; background: #f8f8f8; padding: 20px; }
     h1 { text-align: center; }
+    .mode-toggle { text-align: center; margin-bottom: 10px; }
+    .mode-toggle button { margin: 0 10px; padding: 6px 16px; }
     #calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 20px; }
     .day { background: white; padding: 10px; border: 1px solid #ccc; cursor: pointer; min-height: 60px; position: relative; }
     .today { background: #ffdddd; }
-    .event-mark { font-size: 10px; background: #cde; padding: 2px 4px; border-radius: 4px; margin-top: 5px; display: inline-block; }
-    #eventBox { margin-top: 20px; display: none; }
-    #eventBox textarea { width: 100%; height: 60px; margin-top: 5px; }
+    .event-mark, .finance-mark { font-size: 10px; background: #cde; padding: 2px 4px; border-radius: 4px; margin-top: 5px; display: inline-block; }
+    #eventBox, #financeBox { margin-top: 20px; display: none; }
+    textarea, input[type=text], input[type=number] { width: 100%; margin-top: 5px; }
     button { margin-top: 10px; margin-right: 5px; }
   </style>
 </head>
 <body>
-  <h1>🗓️ 記事日曆 Web App</h1>
+  <h1>📋 記事日曆 Web App</h1>
+  <div class="mode-toggle">
+    <button onclick="setMode('event')">記事</button>
+    <button onclick="setMode('finance')">收支</button>
+  </div>
   <div>
     <label for="month">選擇月份：</label>
     <select id="month"></select>
@@ -25,6 +31,7 @@
     <select id="year"></select>
   </div>
   <div id="calendar"></div>
+
   <div id="eventBox">
     <h2 id="selectedDate">記事</h2>
     <label>開始時間：<input type="time" id="startTime"></label><br/>
@@ -35,13 +42,25 @@
     <button onclick="saveEvent()">儲存</button>
     <button onclick="deleteEvent()">刪除</button>
   </div>
+
+  <div id="financeBox">
+    <h2 id="selectedDateFinance">收支記錄</h2>
+    <input type="text" id="itemName" placeholder="項目名稱" /><br/>
+    <input type="number" id="amount" placeholder="金額" /><br/>
+    <label><input type="radio" name="type" value="收入" checked> 收入</label>
+    <label><input type="radio" name="type" value="支出"> 支出</label><br/>
+    <button onclick="addFinance()">新增</button>
+    <button onclick="clearFinance()">清除全部</button>
+    <ul id="financeList"></ul>
+  </div>
+
   <script>
     const calendar = document.getElementById("calendar");
     const monthSelect = document.getElementById("month");
     const yearSelect = document.getElementById("year");
     const today = new Date();
-    const eventBox = document.getElementById("eventBox");
     let selectedKey = "";
+    let currentMode = 'event';
 
     function fillSelectOptions() {
       for (let m = 0; m < 12; m++) {
@@ -65,7 +84,6 @@
       const year = parseInt(yearSelect.value);
       const month = parseInt(monthSelect.value);
       const days = new Date(year, month + 1, 0).getDate();
-
       for (let i = 1; i <= days; i++) {
         const key = `${year}-${month+1}-${i}`;
         const div = document.createElement("div");
@@ -75,26 +93,32 @@
         }
         div.innerHTML = `<strong>${i}</strong>`;
         const event = JSON.parse(localStorage.getItem(key) || "{}");
-        if (event.text) {
-          div.innerHTML += `<div class="event-mark">${event.start || ""} ${event.text}</div>`;
-        }
-        if (event.holiday) {
-          div.style.border = "2px solid red";
-        }
-        div.onclick = () => showEventBox(key, year, month+1, i, event);
+        if (event.text) div.innerHTML += `<div class="event-mark">${event.start || ""} ${event.text}</div>`;
+        const finances = JSON.parse(localStorage.getItem(key+"-fin") || "[]");
+        if (finances.length > 0) div.innerHTML += `<div class="finance-mark">💰${finances.length} 筆</div>`;
+        div.onclick = () => openBox(key, year, month+1, i, event, finances);
         calendar.appendChild(div);
       }
     }
 
-    function showEventBox(key, y, m, d, data) {
+    function openBox(key, y, m, d, event, finances) {
       selectedKey = key;
-      document.getElementById("selectedDate").textContent = `📑 ${y}-${m}-${d}`;
-      document.getElementById("startTime").value = data.start || "";
-      document.getElementById("endTime").value = data.end || "";
-      document.getElementById("eventText").value = data.text || "";
-      document.getElementById("holiday").checked = !!data.holiday;
-      document.getElementById("busy").checked = !!data.busy;
-      eventBox.style.display = "block";
+      document.getElementById("eventBox").style.display = currentMode === 'event' ? 'block' : 'none';
+      document.getElementById("financeBox").style.display = currentMode === 'finance' ? 'block' : 'none';
+      document.getElementById("selectedDate").textContent = `📋 ${y}-${m}-${d}`;
+      document.getElementById("selectedDateFinance").textContent = `💰 ${y}-${m}-${d}`;
+      document.getElementById("startTime").value = event.start || "";
+      document.getElementById("endTime").value = event.end || "";
+      document.getElementById("eventText").value = event.text || "";
+      document.getElementById("holiday").checked = !!event.holiday;
+      document.getElementById("busy").checked = !!event.busy;
+      updateFinanceList(finances);
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById("eventBox").style.display = mode === 'event' ? 'block' : 'none';
+      document.getElementById("financeBox").style.display = mode === 'finance' ? 'block' : 'none';
     }
 
     function saveEvent() {
@@ -106,14 +130,49 @@
         busy: document.getElementById("busy").checked
       };
       localStorage.setItem(selectedKey, JSON.stringify(data));
-      eventBox.style.display = "none";
       renderCalendar();
     }
 
     function deleteEvent() {
       localStorage.removeItem(selectedKey);
-      eventBox.style.display = "none";
       renderCalendar();
+    }
+
+    function addFinance() {
+      const item = document.getElementById("itemName").value.trim();
+      const amt = parseFloat(document.getElementById("amount").value);
+      const type = document.querySelector("input[name='type']:checked").value;
+      if (!item || isNaN(amt)) return;
+      const record = { item, amt, type };
+      const data = JSON.parse(localStorage.getItem(selectedKey+"-fin") || "[]");
+      data.push(record);
+      localStorage.setItem(selectedKey+"-fin", JSON.stringify(data));
+      updateFinanceList(data);
+      renderCalendar();
+    }
+
+    function clearFinance() {
+      localStorage.removeItem(selectedKey+"-fin");
+      updateFinanceList([]);
+      renderCalendar();
+    }
+
+    function updateFinanceList(data) {
+      const list = document.getElementById("financeList");
+      list.innerHTML = "";
+      let income = 0, expense = 0;
+      data.forEach(entry => {
+        const li = document.createElement("li");
+        li.textContent = `${entry.type}：${entry.item} - $${entry.amt}`;
+        list.appendChild(li);
+        if (entry.type === "收入") income += entry.amt;
+        else expense += entry.amt;
+      });
+      if (data.length > 0) {
+        const summary = document.createElement("li");
+        summary.innerHTML = `<strong>總收入：$${income}，總支出：$${expense}，結餘：$${income - expense}</strong>`;
+        list.appendChild(summary);
+      }
     }
 
     fillSelectOptions();
